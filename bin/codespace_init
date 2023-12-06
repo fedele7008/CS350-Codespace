@@ -1,0 +1,154 @@
+#!/bin/bash
+
+################################################################
+# @ VERSION     0.0.1
+# @ AUTHOR      John Yoon
+#
+# Usage: init [options]
+# Returns:
+#   0 on success
+#   1 on error
+#   553 if docker daemon is not running
+# Options:
+#   -n|--name [container name]
+#       Name the docker container to be [container name]
+#       Default to 'castoros'
+#   -c|--cpu|--cpus [number of cpus]
+#       Allocate [number of cpus] cpus for the container
+#       The [number of cpus] can be integer between 1 and 6 (includsive)
+#       Default to 6
+################################################################
+
+# Load terminal coloring codes
+source load_terminal_colors.sh > /dev/null 2> /dev/null
+_return_value=$?
+if [[ ${_return_value} -ne 0 ]]; then
+    echo -e "\033[31mSomething went wrong. Error Code: \033[1m${_return_value}\033[0m"
+    unset _return_value
+    return 1 2> /dev/null; exit 1
+fi
+unset _return_value
+
+# Default setups
+CASTOROS_CONTAINER_NAME='castoros'
+CASTOROS_HOST_NAME='CS350-CastorOS'
+CASTOROS_WORKDIR='/home/student'
+CASTOROS_CPUS=6
+CASTOROS_PLATFORM='linux/amd64'
+CASTOROS_BASE_IMAGE='fedele7008/cs350-castoros'
+CASTOROS_BASE_IMAGE_TAG='latest'
+CASTOROS_ENTRYPOINT='bash'
+CASTOROS_MOUNTING_LOCATION=$(pwd)
+CASTOROS_FOUND=False
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do 
+    case $1 in
+        -n|--name)
+            CUSTOM_CONTAINER_NAME="$2"
+            shift
+            shift
+            ;;
+        -c|--cpu|--cpus)
+            CUSTOM_CPUS="$2"
+            shift
+            shift
+            ;;
+        -*|--*)
+            echo -e "${RED}Unknown option ${BOLD}${1}${RESET}"
+            shift
+            ;;
+        *)
+            echo -e "${RED}Invalid option ${BOLD}${1}${RESET}"
+            shift
+            ;;
+    esac
+done
+
+# Verify argument for custom container name
+if [[ ! -z ${CUSTOM_CONTAINER_NAME} ]]; then
+    CUSTOM_CONTAINER_NAME=${CUSTOM_CONTAINER_NAME// /-}
+    if [[ ! ${CUSTOM_CONTAINER_NAME} =~ [a-zA-Z0-9-]+ ]]; then
+        echo -e "${RED}The container name ${BOLD}\"${CUSTOM_CONTAINER_NAME}\"${RESET}${RED} is not usable${RESET}"
+        return 1 2> /dev/null; exit 1
+    fi
+    CASTOROS_CONTAINER_NAME=${CUSTOM_CONTAINER_NAME}
+fi
+
+# Verify argument for custom number of cpus
+if [[ ! -z ${CUSTOM_CPUS} ]]; then
+    if [[ ! ${CUSTOM_CPUS} =~ ^[1-6]$ ]]; then
+        echo -e "${RED}You can only allocate ${BOLD}1-6 CPU cores${RESET}${RED} to the container. You entered ${BOLD}${CUSTOM_CPUS}${RESET}${RED}.${RESET}"
+        return 1 2> /dev/null; exit 1
+    fi
+    CASTOROS_CPUS="${CUSTOM_CPUS}"
+fi
+
+# Check if docker daemon is running
+check_docker_running.sh > /dev/null 2> /dev/null
+_return_value=$?
+if [[ ${_return_value} -eq 553 ]]; then
+    echo -e "${RED}Docker daemon is not running.${RESET}"
+    echo -e "${MAGENTA}Please run the script again after turnning on the docker engine.${RESET}"
+    unset _return_value
+    return 553 2> /dev/null; exit 553
+elif [[ ${_return_value} -ne 0 ]]; then
+    echo -e "${RED}Something went wrong. Error Code: ${BOLD}${_return_value}${RESET}"
+    unset _return_value
+    return 1 2> /dev/null; exit 1
+fi
+unset _return_value
+
+# Confirm Castor OS Mounting location
+echo -e "${CYAN}${BOLD}CASTOR OS CODESPACE INITIALIZATION ${RESET}"
+echo -e ""
+echo -e "The project directory, '${BLUE}${ITALIC}castoros/${RESET}' will be mounted in your current local directory: \"${BLUE}${CASTOROS_MOUNTING_LOCATION}${RESET}\""
+echo -e ""
+if [[ -d "${CASTOROS_MOUNTING_LOCATION}"/castoros ]]; then
+    echo -e "We found '${BLUE}${ITALIC}castoros/${RESET}' in this location.${RESET}"
+    echo -e "${GREEN}It will be mounted with the container's project directory.${RESET}"
+    CASTOROS_FOUND=True
+else
+    echo -e "We could not find '${BLUE}${ITALIC}castoros/${RESET}' in this location.${RESET}"
+    echo -e "${GREEN}It will be automatically create base 'castoros/' project directory here.${RESET}"
+fi
+echo -e ""
+echo -en "${BOLD}Would you like to proceed? [Y/n]: ${RESET}"
+read _USER_PROCEED
+if [[ ${_USER_PROCEED} =~ (n|N)(o|O)? ]]; then
+    echo -e "Initialization setup cancelled."
+    return 1 2> /dev/null; exit 1
+fi
+
+# Check if docker container already exist
+OVERRIDE_CONTAINER=False
+VALIDATE_CONTAINER_EXIST=$(docker container ls -a -f name="^${CASTOROS_CONTAINER_NAME}$" -q)
+if [[ ! -z ${VALIDATE_CONTAINER_EXIST} ]]; then
+    echo -e "${MAGENTA}The container named \"${BOLD}${CASTOROS_CONTAINER_NAME}${RESET}${MAGENTA}\" already exists.${RESET}"
+    echo -en "${BOLD}Do you want to override it? [y/N]: ${RESET}"
+    read _USER_ANSWER
+    if [[ ! ${_USER_ANSWER} =~ (y|Y)((e|E)(s|S))? ]]; then
+        echo -e "${RED}Initialization setup cancelled: ${BOLD}Container already exists${RESET}"
+        return 1 2> /dev/null; exit 1 
+    fi
+    OVERRIDE_CONTAINER=True
+fi
+
+# Create docker container
+if [[ ${OVERRIDE_CONTAINER} == True ]]; then
+    docker rm -f ${CASTOROS_CONTAINER_NAME} > /dev/null 2>&1
+fi
+
+echo -en "${GRAY}"
+docker create -it --name "${CASTOROS_CONTAINER_NAME}" --hostname "${CASTOROS_HOST_NAME}" --workdir "${CASTOROS_WORKDIR}" --cpus "${CASTOROS_CPUS}" --platform "${CASTOROS_PLATFORM}" --volume "${CASTOROS_MOUNTING_LOCATION}/castoros:/home/student/castoros" "${CASTOROS_BASE_IMAGE}":"${CASTOROS_BASE_IMAGE_TAG}" "${CASTOROS_ENTRYPOINT}"
+result=$?
+echo -en "${RESET}"
+
+if [[ $result -eq 0 ]]; then
+    echo -e "${GREEN}Docker container \"${BOLD}${CASTOROS_CONTAINER_NAME}${RESET}${GREEN}\" is successfully created.${RESET}"
+    if [[ ${CASTOROS_FOUND} == False ]]; then
+        echo -e "${GREEN}${ITALIC}The project directory 'castoros/' will be automatically created once you start the container${RESET}"
+    fi
+else
+    echo -e "${RED}Something went wrong. Error Code: ${BOLD}${result}${RESET}"
+fi
